@@ -71,6 +71,17 @@ def find_tracks_by_name(tracks_el, name, track_type=None):
     return matches
 
 
+# Device parameters that are stored as linear amplitude values in XML
+# but specified as dB in the change JSON (same encoding as volume).
+# Key format: (device_tag, param_name)
+DB_LINEAR_PARAMS = {
+    ("Compressor2", "Threshold"),
+    ("Compressor2", "OutputGain"),
+    ("Gate", "Threshold"),
+    ("Gate", "Return"),
+}
+
+
 def find_device(track_el, device_tag, device_index=0):
     """Find a device in a track's device chain by tag and index."""
     devices_el = track_el.find("DeviceChain/DeviceChain/Devices")
@@ -194,6 +205,12 @@ def apply_change(root, tracks_el, change):
         if device is None:
             return [f"ERROR: Could not find device '{device_tag}' on track '{track_name}'"]
 
+        # Convert dB→linear for params that use linear encoding
+        display_value = param_value
+        if (device_tag, param_name) in DB_LINEAR_PARAMS:
+            param_value = db_to_linear(param_value)
+            display_value = f"{change.get('param_value')} dB"
+
         # Try to get old value for description
         old_value = None
         target_el = device.find(param_name)
@@ -204,11 +221,22 @@ def apply_change(root, tracks_el, change):
             elif "Value" in target_el.attrib:
                 old_value = target_el.get("Value")
 
+        # Format old value as dB for linear params
+        old_str = "?"
+        if old_value is not None:
+            if (device_tag, param_name) in DB_LINEAR_PARAMS:
+                old_float = float(old_value)
+                if old_float > 0.0003163:
+                    old_str = f"{20 * math.log10(old_float):.1f} dB"
+                else:
+                    old_str = "-inf dB"
+            else:
+                old_str = str(old_value)
+
         success = set_param_value(device, param_name, param_value)
         if success:
             device_display = change.get("device_name", device_tag)
-            old_str = f"{old_value}" if old_value else "?"
-            descriptions.append(f"  {track_name}: {device_display} {param_name} {old_str} → {param_value}")
+            descriptions.append(f"  {track_name}: {device_display} {param_name} {old_str} → {display_value}")
         else:
             return [f"ERROR: Could not set {param_name} on {device_tag} for track '{track_name}'"]
 

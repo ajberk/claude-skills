@@ -123,7 +123,16 @@ def extract_tracks(root):
                     ratio = get_param(d, "Ratio")
                     threshold = get_param(d, "Threshold")
                     info["ratio"] = float(ratio) if ratio else None
-                    info["threshold"] = float(threshold) if threshold else None
+                    # Compressor2 stores threshold as linear amplitude, GlueCompressor as dB
+                    if threshold is not None:
+                        th_val = float(threshold)
+                        if d.tag == "Compressor2":
+                            # Convert linear to dB
+                            info["threshold"] = vol_to_db(th_val)
+                        else:
+                            info["threshold"] = th_val
+                    else:
+                        info["threshold"] = None
 
                 device_info.append(info)
 
@@ -262,9 +271,15 @@ def score_stereo_image(tracks):
         issues.append(f"Extreme panning (>40): {', '.join(extreme)} (-{5*len(extreme)}pts)")
 
     # Check bass elements are centered (by name heuristic)
-    bass_names = {"sub", "bass", "kick", "low bass", "basssss"}
+    # Only flag tracks that are clearly low-frequency fundamentals
+    bass_names = {"sub", "kick", "low bass"}
+    high_prefixes = {"high", "hi"}
     for t in non_muted:
-        if any(b in t["name"].lower() for b in bass_names) and abs(t["pan"]) > 0.1:
+        name_lower = t["name"].lower()
+        # Skip names that start with "high" — those are upper harmonics
+        if any(name_lower.startswith(p) for p in high_prefixes):
+            continue
+        if any(b == name_lower or (b in name_lower and "high" not in name_lower) for b in bass_names) and abs(t["pan"]) > 0.1:
             score -= 10
             issues.append(f"Bass element '{t['name']}' panned off-center (-10pts)")
 

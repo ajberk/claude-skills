@@ -76,7 +76,7 @@ DEVICE_PARAMS = {
         "DryWet": ("Dry/Wet", "ratio"),
     },
     "Compressor2": {
-        "Threshold": ("Threshold", "dB"),
+        "Threshold": ("Threshold", "dB_linear"),
         "Ratio": ("Ratio", ""),
         "Attack": ("Attack", "ms"),
         "Release": ("Release", "ms"),
@@ -116,8 +116,8 @@ DEVICE_PARAMS = {
         "Drive": ("Drive", "raw"),
     },
     "Gate": {
-        "Threshold": ("Threshold", "dB"),
-        "Return": ("Return", "dB"),
+        "Threshold": ("Threshold", "dB_linear"),
+        "Return": ("Return", "dB_linear"),
         "Attack": ("Attack", "ms"),
         "Hold": ("Hold", "ms"),
         "Release": ("Release", "ms"),
@@ -181,6 +181,11 @@ def format_param(name, value, unit):
         return f"{name}: {v * 100:.0f}%"
     elif unit == "dB":
         return f"{name}: {v:.1f} dB"
+    elif unit == "dB_linear":
+        # Stored as linear amplitude, display as dB
+        if v <= 0.0003163:
+            return f"{name}: -inf dB"
+        return f"{name}: {20 * math.log10(v):.1f} dB"
     elif unit == "dB_utility":
         # Utility gain is stored as linear value
         if v <= 0.0003163:
