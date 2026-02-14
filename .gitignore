@@ -1,0 +1,19 @@
+# Session data and caches
+cache/
+debug/
+downloads/
+file-history/
+history.jsonl
+plans/
+plugins/
+projects/
+session-env/
+shell-snapshots/
+tasks/
+todos/
+
+# Local settings (may contain machine-specific config)
+settings.local.json
+
+# Memory files (personal/session-specific)
+memory/
