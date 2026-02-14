@@ -238,6 +238,19 @@ def extract_plugin_name(device_element):
     return None
 
 
+EQ8_MODES = {
+    0: "LC48",   # Low Cut 48 dB/oct (high-pass)
+    1: "LC12",   # Low Cut 12 dB/oct (high-pass)
+    2: "LS",     # Low Shelf
+    3: "Bell",   # Parametric Bell
+    4: "BP",     # Band Pass
+    5: "Notch",  # Notch
+    6: "HS",     # High Shelf
+    7: "HC12",   # High Cut 12 dB/oct (low-pass)
+    8: "HC48",   # High Cut 48 dB/oct (low-pass)
+}
+
+
 def extract_eq8_bands(device_element):
     """Extract EQ Eight band info."""
     bands = []
@@ -250,13 +263,19 @@ def extract_eq8_bands(device_element):
             gain = get_param_value(device_element, f"Bands.{i - 1}/ParameterA/Gain")
             freq = get_param_value(device_element, f"Bands.{i - 1}/ParameterA/Freq")
             q = get_param_value(device_element, f"Bands.{i - 1}/ParameterA/Q")
+            mode = get_param_value(device_element, f"Bands.{i - 1}/ParameterA/Mode")
+            mode_int = int(float(mode)) if mode else 3
+            mode_label = EQ8_MODES.get(mode_int, "Bell")
             band_info = f"B{i}"
+            # Show filter type for non-bell modes
+            if mode_label != "Bell":
+                band_info += f"[{mode_label}]"
             if freq:
                 f_val = float(freq)
                 band_info += f" {f_val:.0f}Hz" if f_val < 1000 else f" {f_val / 1000:.1f}kHz"
-            if gain:
+            if gain and mode_label in ("Bell", "LS", "HS", "Notch"):
                 band_info += f" {float(gain):+.1f}dB"
-            if q:
+            if q and mode_label == "Bell":
                 band_info += f" Q{float(q):.1f}"
             bands.append(band_info)
     return bands

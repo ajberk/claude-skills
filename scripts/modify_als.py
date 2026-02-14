@@ -10,7 +10,7 @@ JSON format:
       "track_name": "Snare",
       "track_type": "MidiTrack",       // optional, to disambiguate duplicate names
       "track_index": 0,                 // optional, 0-based index among matches
-      "target": "volume",              // volume | pan | send | device_param | group_volume
+      "target": "volume",              // volume | pan | send | device_param | add_device | group_volume
       "value": -6.0,                   // for volume/send: dB value. for pan: position string like "18R" or "C"
       "send_index": 0,                 // for send: 0=A, 1=B, 2=C, etc.
       "device_tag": "GlueCompressor",  // for device_param: the XML tag of the device
@@ -31,7 +31,7 @@ import gzip
 import json
 import math
 import os
-import shutil
+import copy
 import xml.etree.ElementTree as ET
 
 
@@ -79,6 +79,78 @@ DB_LINEAR_PARAMS = {
     ("Compressor2", "OutputGain"),
     ("Gate", "Threshold"),
     ("Gate", "Return"),
+}
+
+
+def find_max_id(root):
+    """Find the highest Id attribute value in the entire XML tree."""
+    max_id = 0
+    for el in root.iter():
+        id_val = el.get("Id")
+        if id_val is not None:
+            try:
+                max_id = max(max_id, int(id_val))
+            except ValueError:
+                pass
+    return max_id
+
+
+def find_donor_device(root, device_tag):
+    """Find an existing device of the given type anywhere in the project to use as a template."""
+    for el in root.iter():
+        if el.tag == device_tag:
+            return el
+    return None
+
+
+def remap_ids(element, start_id):
+    """Remap all Id attributes in an element tree to new unique values starting from start_id."""
+    next_id = start_id
+    for el in element.iter():
+        if "Id" in el.attrib:
+            el.set("Id", str(next_id))
+            next_id += 1
+    return next_id
+
+
+def reset_eq8_defaults(device):
+    """Reset an EQ Eight clone to clean defaults — all bands off with neutral settings."""
+    for i in range(8):
+        for param_set in ("ParameterA", "ParameterB"):
+            prefix = f"Bands.{i}/{param_set}"
+            # Turn off all bands
+            is_on = device.find(f"{prefix}/IsOn/Manual")
+            if is_on is not None:
+                is_on.set("Value", "false")
+            # Reset gain to 0
+            gain = device.find(f"{prefix}/Gain/Manual")
+            if gain is not None:
+                gain.set("Value", "0")
+            # Reset Q
+            q = device.find(f"{prefix}/Q/Manual")
+            if q is not None:
+                q.set("Value", "0.7071067")
+
+
+def reset_compressor_defaults(device):
+    """Reset a Compressor2 clone to clean defaults."""
+    defaults = {
+        "Threshold": str(db_to_linear(0)),  # 0 dB
+        "Ratio": "2",
+        "Attack": "10",
+        "Release": "100",
+        "DryWet": "1",
+        "GainCompensation": "true",
+    }
+    for param, val in defaults.items():
+        el = device.find(f"{param}/Manual")
+        if el is not None:
+            el.set("Value", val)
+
+
+DEVICE_RESETTERS = {
+    "Eq8": reset_eq8_defaults,
+    "Compressor2": reset_compressor_defaults,
 }
 
 
@@ -239,6 +311,60 @@ def apply_change(root, tracks_el, change):
             descriptions.append(f"  {track_name}: {device_display} {param_name} {old_str} → {display_value}")
         else:
             return [f"ERROR: Could not set {param_name} on {device_tag} for track '{track_name}'"]
+
+    elif target == "add_device":
+        device_tag = change.get("device_tag")
+        position = change.get("position", -1)  # -1 = end, 0 = first, etc.
+        params = change.get("params", {})
+        device_display = change.get("device_name", device_tag)
+
+        # Find a donor device to clone
+        donor = find_donor_device(root, device_tag)
+        if donor is None:
+            return [f"ERROR: No existing '{device_tag}' found in project to use as template"]
+
+        # Deep copy the donor
+        new_device = copy.deepcopy(donor)
+
+        # Remap all IDs to unique values
+        max_id = find_max_id(root)
+        remap_ids(new_device, max_id + 1)
+
+        # Reset to defaults if we have a resetter for this device type
+        resetter = DEVICE_RESETTERS.get(device_tag)
+        if resetter:
+            resetter(new_device)
+
+        # Ensure device is on
+        on_el = new_device.find("On/Manual")
+        if on_el is not None:
+            on_el.set("Value", "true")
+
+        # Apply requested parameters
+        for param_path, param_val in params.items():
+            # Handle dB→linear conversion for known params
+            actual_val = param_val
+            if (device_tag, param_path) in DB_LINEAR_PARAMS:
+                actual_val = db_to_linear(float(param_val))
+            success = set_param_value(new_device, param_path, actual_val)
+            if not success:
+                return [f"ERROR: Could not set param '{param_path}' on new {device_tag} for '{track_name}'"]
+
+        # Insert into the track's device chain
+        devices_el = track_el.find("DeviceChain/DeviceChain/Devices")
+        if devices_el is None:
+            return [f"ERROR: No device chain found on track '{track_name}'"]
+
+        device_list = list(devices_el)
+        if position == -1 or position >= len(device_list):
+            devices_el.append(new_device)
+            pos_desc = "end"
+        else:
+            devices_el.insert(position, new_device)
+            pos_desc = f"position {position}"
+
+        param_desc = ", ".join(f"{k}={v}" for k, v in params.items()) if params else "defaults"
+        descriptions.append(f"  {track_name}: Added {device_display} at {pos_desc} ({param_desc})")
 
     elif target == "group_volume":
         # For group tracks, same as volume but explicitly for groups
